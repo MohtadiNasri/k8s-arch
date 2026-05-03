@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kubernetes v1.36 Architecture · 2026</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;600;700&family=Bebas+Neue&family=Outfit:wght@300;400;600;700;800&display=swap');
+
+:root {
+  --bg: #04080f; --surface: #080f1e; --surface2: #0d1830;
+  --border: #162444; --border2: #1e3464;
+  --blue: #4f9cf9; --cyan: #22d3ee; --green: #34d399;
+  --yellow: #fbbf24; --purple: #a78bfa; --red: #f87171;
+  --orange: #fb923c; --text: #e8f0fe; --muted: #4a6080; --muted2: #7090b0;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: 'IBM Plex Mono', monospace; min-height: 100vh; overflow-x: hidden; }
+body::before { content: ''; position: fixed; inset: 0; background: radial-gradient(ellipse 80% 40% at 20% 10%, rgba(79,156,249,0.04) 0%,transparent 60%), radial-gradient(ellipse 60% 30% at 80% 80%, rgba(52,211,153,0.03) 0%,transparent 50%); pointer-events: none; z-index: 0; }
+body::after { content: ''; position: fixed; inset: 0; background-image: radial-gradient(circle, rgba(79,156,249,0.1) 1px, transparent 1px), radial-gradient(circle, rgba(79,156,249,0.04) 1px, transparent 1px); background-size: 48px 48px, 24px 24px; background-position: 0 0, 24px 24px; pointer-events: none; z-index: 0; }
+.wrap { position: relative; z-index: 1; max-width: 1120px; margin: 0 auto; padding: 28px 18px 100px; }
+
+/* HEADER */
+header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 32px; flex-wrap: wrap; animation: fadeIn .5s ease both; }
+header h1 { font-family: 'Bebas Neue', sans-serif; font-size: clamp(32px,6vw,58px); letter-spacing: 2px; line-height: 1; background: linear-gradient(90deg,#e8f0fe 0%,#4f9cf9 55%,#22d3ee 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+.subtitle { font-size: 11px; color: var(--muted2); margin-top: 6px; letter-spacing: 1px; }
+.badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.badge { font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; padding: 4px 10px; border-radius: 4px; font-weight: 600; }
+.badge.s { background: rgba(52,211,153,0.12); color: var(--green); border: 1px solid rgba(52,211,153,0.25); }
+.badge.b { background: rgba(79,156,249,0.12); color: var(--blue); border: 1px solid rgba(79,156,249,0.25); }
+.badge.n { background: rgba(251,191,36,0.12); color: var(--yellow); border: 1px solid rgba(251,191,36,0.25); }
+.badge.d { background: rgba(248,113,113,0.1); color: var(--red); border: 1px solid rgba(248,113,113,0.25); }
+.hstats { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; min-width: 200px; }
+.sbox { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; text-align: center; }
+.sbox .n2 { font-family: 'Bebas Neue', sans-serif; font-size: 24px; line-height: 1; color: var(--cyan); }
+.sbox .lb { font-size: 8px; color: var(--muted2); letter-spacing: 1px; text-transform: uppercase; margin-top: 3px; }
+
+/* CLUSTER */
+.cluster { border: 1px solid rgba(79,156,249,0.2); border-radius: 16px; padding: 20px; background: rgba(8,15,30,0.7); position: relative; animation: fadeUp .5s ease .1s both; }
+.ctag { position: absolute; top: -11px; left: 20px; background: var(--bg); padding: 0 10px; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--blue); font-weight: 600; }
+
+/* SECTION HEAD */
+.shead { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.shead .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; animation: pulse 2s infinite; }
+.shead .lbl { font-family: 'Outfit', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 2.5px; text-transform: uppercase; }
+.shead .line { flex: 1; height: 1px; background: var(--border); }
+
+/* CONTROL PLANE */
+.cpw { background: linear-gradient(135deg, rgba(79,156,249,0.06), rgba(167,139,250,0.04)); border: 1px solid rgba(79,156,249,0.2); border-radius: 12px; padding: 18px; margin-bottom: 18px; animation: fadeUp .5s ease .15s both; }
+.cpg { display: grid; grid-template-columns: repeat(auto-fill, minmax(175px,1fr)); gap: 10px; }
+
+/* CARDS */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; cursor: pointer; transition: transform .2s, box-shadow .2s, border-color .2s; position: relative; overflow: hidden; }
+.card[data-c="blue"]   { --cc: var(--blue); }
+.card[data-c="cyan"]   { --cc: var(--cyan); }
+.card[data-c="purple"] { --cc: var(--purple); }
+.card[data-c="yellow"] { --cc: var(--yellow); }
+.card[data-c="orange"] { --cc: var(--orange); }
+.card[data-c="green"]  { --cc: var(--green); }
+.card:hover { transform: translateY(-3px); box-shadow: 0 12px 32px rgba(0,0,0,.5); border-color: var(--cc); background: color-mix(in srgb, var(--cc) 5%, var(--surface)); }
+
+/* Per-component animations */
+/* apiserver — radar ring */
+.card[data-id="apiserver"] .anim { position: absolute; top: -15px; right: -15px; width: 70px; height: 70px; border-radius: 50%; border: 1px solid rgba(79,156,249,0.2); animation: radar 2.5s ease-out infinite; pointer-events: none; }
+.card[data-id="apiserver"] .anim2 { position: absolute; top: -15px; right: -15px; width: 70px; height: 70px; border-radius: 50%; border: 1px solid rgba(79,156,249,0.15); animation: radar 2.5s ease-out .8s infinite; pointer-events: none; }
+/* etcd — particle drip */
+.particle { position: absolute; width: 2px; border-radius: 1px; background: var(--purple); opacity: 0; animation: drip linear infinite; pointer-events: none; }
+/* scheduler — orbit dot */
+.card[data-id="scheduler"] .anim { position: absolute; top: 8px; right: 8px; width: 30px; height: 30px; pointer-events: none; }
+.card[data-id="scheduler"] .anim::before { content: ''; position: absolute; top: 50%; left: 50%; width: 5px; height: 5px; margin: -2.5px; border-radius: 50%; background: rgba(34,211,238,0.5); animation: orbitdot 2s linear infinite; }
+/* controller — gear spin */
+.card[data-id="controller"] .anim { position: absolute; top: 4px; right: 6px; font-size: 34px; opacity: .07; animation: spin 7s linear infinite; pointer-events: none; user-select: none; }
+/* cloud — float */
+.card[data-id="cloud"] .anim { position: absolute; bottom: 4px; right: 6px; font-size: 28px; opacity: .08; animation: float 3s ease-in-out infinite; pointer-events: none; user-select: none; }
+
+.cicon { font-size: 22px; margin-bottom: 8px; display: block; }
+.cname { font-family: 'Outfit', sans-serif; font-size: 12px; font-weight: 700; color: var(--cc); margin-bottom: 5px; }
+.cdesc { font-size: 9.5px; color: var(--muted2); line-height: 1.6; }
+.cbadge { display: inline-block; font-size: 8px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; padding: 2px 6px; border-radius: 3px; margin-top: 7px; background: color-mix(in srgb, var(--cc) 15%, transparent); color: var(--cc); border: 1px solid color-mix(in srgb, var(--cc) 30%, transparent); }
+
+/* CONNECTOR */
+.conn { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 8px 0 14px; color: var(--muted); font-size: 9px; letter-spacing: 1px; }
+.conn hr { flex: 1; max-width: 80px; border: none; border-top: 1px dashed var(--border2); }
+.conn .arr { color: var(--blue); font-size: 14px; animation: bob 2s infinite; }
+
+/* NODES */
+.nwrap { display: grid; grid-template-columns: repeat(auto-fit,minmax(285px,1fr)); gap: 14px; margin-bottom: 18px; animation: fadeUp .5s ease .25s both; }
+.node { background: linear-gradient(135deg,rgba(52,211,153,0.04),rgba(34,211,238,0.02)); border: 1px solid rgba(52,211,153,0.18); border-radius: 12px; padding: 16px; transition: border-color .2s; position: relative; overflow: hidden; }
+.node::before { content: ''; position: absolute; inset: 0; border-radius: 12px; animation: hb 3s ease-in-out infinite; pointer-events: none; }
+.node:hover { border-color: rgba(52,211,153,0.35); }
+.nh { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.nn { font-family: 'Outfit', sans-serif; font-size: 11px; font-weight: 700; color: var(--green); letter-spacing: 1px; text-transform: uppercase; display: flex; align-items: center; gap: 6px; }
+.nn::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: var(--green); display: inline-block; box-shadow: 0 0 6px var(--green); animation: pulse 2s infinite; }
+.ns { font-size: 8px; color: var(--green); background: rgba(52,211,153,0.1); border: 1px solid rgba(52,211,153,0.2); padding: 2px 7px; border-radius: 3px; letter-spacing: 1px; }
+.ncg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+.nc { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px; cursor: pointer; transition: all .2s; position: relative; overflow: hidden; }
+.nc:hover { border-color: var(--cyan); background: var(--surface2); transform: translateY(-1px); }
+/* kubelet — ping pulse */
+.nc[data-id="kubelet"]::after { content: ''; position: absolute; top: 7px; right: 7px; width: 8px; height: 8px; border-radius: 50%; background: rgba(52,211,153,0.5); animation: ping 1.8s ease-out infinite; pointer-events: none; }
+/* kube-proxy — flow line */
+.nc[data-id="kubeproxy"] .fl { position: absolute; bottom: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg,transparent,rgba(34,211,238,0.5),transparent); animation: flowl 2s linear infinite; pointer-events: none; }
+/* runtime — scan */
+.nc[data-id="runtime"]::before { content: ''; position: absolute; top: 0; left: -100%; width: 50%; height: 100%; background: linear-gradient(90deg,transparent,rgba(79,156,249,0.08),transparent); animation: scanl 2.5s ease-in-out infinite; pointer-events: none; }
+/* cni — blinking dots */
+.nc[data-id="cni"] .bdots { position: absolute; bottom: 5px; right: 5px; display: flex; gap: 3px; pointer-events: none; }
+.nc[data-id="cni"] .bdots span { width: 3px; height: 3px; border-radius: 50%; background: var(--purple); animation: blink 1.5s ease-in-out infinite; }
+.nc[data-id="cni"] .bdots span:nth-child(2) { animation-delay: .3s; }
+.nc[data-id="cni"] .bdots span:nth-child(3) { animation-delay: .6s; }
+
+.nc .cicon { font-size: 16px; margin-bottom: 5px; }
+.nc .cname { font-size: 10.5px; }
+.nc .cdesc { font-size: 9px; }
+
+/* PODS */
+.pods { grid-column: 1/-1; background: rgba(34,211,238,0.03); border: 1px dashed rgba(34,211,238,0.18); border-radius: 8px; padding: 10px; cursor: pointer; transition: border-color .2s; position: relative; overflow: hidden; }
+.pods::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg,transparent,rgba(34,211,238,0.04),transparent); animation: shimmer 3s ease-in-out infinite; pointer-events: none; }
+.pods:hover { border-color: rgba(34,211,238,0.5); }
+.ptitle { font-size: 8px; color: var(--muted2); letter-spacing: 2px; text-transform: uppercase; margin-bottom: 7px; }
+.plist { display: flex; flex-wrap: wrap; gap: 5px; }
+.pod { background: rgba(34,211,238,0.08); border: 1px solid rgba(34,211,238,0.18); border-radius: 4px; padding: 3px 8px; font-size: 9px; color: var(--cyan); display: flex; align-items: center; gap: 4px; animation: podpop .4s ease both; }
+.pod::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: var(--cyan); opacity: 0.6; }
+.pod:nth-child(1){animation-delay:.05s} .pod:nth-child(2){animation-delay:.1s} .pod:nth-child(3){animation-delay:.15s} .pod:nth-child(4){animation-delay:.2s}
+
+/* ADDONS */
+.awrap { animation: fadeUp .5s ease .35s both; }
+.agrid { display: grid; grid-template-columns: repeat(auto-fill,minmax(150px,1fr)); gap: 8px; }
+.addon { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: flex; align-items: center; gap: 8px; cursor: pointer; transition: all .2s; position: relative; overflow: hidden; }
+.addon::before { content: ''; position: absolute; top: 0; left: -100%; width: 50%; height: 100%; background: linear-gradient(90deg,transparent,rgba(167,139,250,0.1),transparent); transition: left .4s ease; pointer-events: none; }
+.addon:hover::before { left: 150%; }
+.addon:hover { border-color: var(--purple); background: var(--surface2); }
+.aicon { font-size: 18px; flex-shrink: 0; }
+.aname { font-family: 'Outfit', sans-serif; font-size: 10px; font-weight: 700; color: var(--purple); margin-bottom: 1px; }
+.adesc { font-size: 8.5px; color: var(--muted2); }
+
+/* NEWS TICKER */
+.ticker { margin-top: 20px; border: 1px solid rgba(251,191,36,0.2); border-radius: 8px; background: rgba(251,191,36,0.04); padding: 10px 14px; display: flex; align-items: center; gap: 10px; overflow: hidden; animation: fadeUp .5s ease .4s both; }
+.ttag { font-size: 8px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; color: var(--yellow); background: rgba(251,191,36,0.12); border: 1px solid rgba(251,191,36,0.25); padding: 3px 8px; border-radius: 3px; white-space: nowrap; flex-shrink: 0; }
+.titems { overflow: hidden; flex: 1; }
+.tscroll { display: flex; gap: 32px; animation: marquee 25s linear infinite; white-space: nowrap; }
+.titem { font-size: 10px; color: var(--muted2); display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.titem::before { content: '→'; color: var(--yellow); }
+
+/* DETAIL PANEL */
+.panel { position: fixed; bottom: 0; left: 0; right: 0; background: #07101f; border-top: 1px solid var(--border2); z-index: 200; transform: translateY(100%); transition: transform .35s cubic-bezier(.34,1.56,.64,1); box-shadow: 0 -20px 60px rgba(0,0,0,.8); max-height: 60vh; overflow-y: auto; }
+.panel.open { transform: translateY(0); }
+.pb { max-width: 1000px; margin: 0 auto; padding: 20px 24px; }
+.ptop { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.pclose { background: var(--surface); border: 1px solid var(--border); color: var(--muted2); width: 30px; height: 30px; border-radius: 50%; cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; transition: all .15s; flex-shrink: 0; }
+.pclose:hover { color: var(--text); border-color: var(--text); }
+.pname { font-family: 'Outfit', sans-serif; font-size: 18px; font-weight: 800; color: var(--text); margin-bottom: 4px; }
+.ptags { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+.ptag { font-size: 9px; letter-spacing: 1px; text-transform: uppercase; padding: 3px 9px; border-radius: 4px; border: 1px solid; opacity: .85; }
+.pdesc { font-size: 12px; color: #8ab0d0; line-height: 1.75; margin-bottom: 12px; }
+.pupdate { background: rgba(251,191,36,0.07); border: 1px solid rgba(251,191,36,0.2); border-radius: 6px; padding: 8px 12px; font-size: 10px; color: var(--yellow); margin-bottom: 14px; line-height: 1.6; }
+.pupdate strong { color: #fcd34d; }
+
+/* kubectl section */
+.ksec { margin-top: 4px; }
+.ktitle { font-family: 'Outfit', sans-serif; font-size: 11px; font-weight: 700; color: var(--cyan); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+.ktitle::before { content: '$'; font-family: 'IBM Plex Mono',monospace; color: var(--green); font-size: 14px; }
+.cgrid { display: grid; grid-template-columns: repeat(auto-fill,minmax(300px,1fr)); gap: 8px; }
+.cc { background: #020810; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; position: relative; transition: border-color .2s; }
+.cc:hover { border-color: var(--cyan); }
+.clbl { font-size: 9px; color: var(--muted2); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 5px; }
+.ccode { font-family: 'IBM Plex Mono',monospace; font-size: 10.5px; color: var(--cyan); line-height: 1.7; white-space: pre-wrap; }
+.ccode .kw  { color: var(--green); }
+.ccode .fl  { color: var(--yellow); }
+.ccode .cmt { color: var(--muted); font-style: italic; }
+.cpbtn { position: absolute; top: 8px; right: 8px; background: none; border: 1px solid var(--border); color: var(--muted2); font-size: 8px; padding: 2px 6px; border-radius: 3px; cursor: pointer; transition: all .15s; letter-spacing: 1px; font-family: 'IBM Plex Mono',monospace; }
+.cpbtn:hover { border-color: var(--cyan); color: var(--cyan); }
+.cpbtn.ok { border-color: var(--green); color: var(--green); }
+
+/* ANIMATIONS */
+@keyframes fadeIn  { from{opacity:0;}                            to{opacity:1;} }
+@keyframes fadeUp  { from{opacity:0;transform:translateY(18px);} to{opacity:1;transform:translateY(0);} }
+@keyframes pulse   { 0%,100%{opacity:1;transform:scale(1);}     50%{opacity:.3;transform:scale(.6);} }
+@keyframes bob     { 0%,100%{transform:translateY(0);}          50%{transform:translateY(5px);} }
+@keyframes radar   { from{transform:scale(1);opacity:.6;}        to{transform:scale(3);opacity:0;} }
+@keyframes orbitdot{ from{transform:rotate(0deg) translateX(14px);} to{transform:rotate(360deg) translateX(14px);} }
+@keyframes spin    { from{transform:rotate(0deg);}               to{transform:rotate(360deg);} }
+@keyframes float   { 0%,100%{transform:translateY(0);}          50%{transform:translateY(-6px);} }
+@keyframes ping    { 0%{transform:scale(1);opacity:.7;}          100%{transform:scale(2.8);opacity:0;} }
+@keyframes flowl   { from{transform:translateX(-100%);}          to{transform:translateX(200%);} }
+@keyframes scanl   { 0%,100%{left:-100%;}                        50%{left:150%;} }
+@keyframes blink   { 0%,100%{opacity:.2;}                        50%{opacity:1;} }
+@keyframes shimmer { 0%,100%{opacity:0;}                         50%{opacity:1;} }
+@keyframes podpop  { from{opacity:0;transform:scale(.7);}        to{opacity:1;transform:scale(1);} }
+@keyframes drip    { 0%{transform:translateY(-8px);opacity:0;}   40%{opacity:.3;}  100%{transform:translateY(70px);opacity:0;} }
+@keyframes hb      { 0%,100%{box-shadow:inset 0 0 0 1px rgba(52,211,153,0);} 50%{box-shadow:inset 0 0 0 1px rgba(52,211,153,.18);} }
+@keyframes marquee { from{transform:translateX(0);}              to{transform:translateX(-50%);} }
+::-webkit-scrollbar{width:4px} ::-webkit-scrollbar-track{background:var(--bg)} ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div>
+    <h1>KUBERNETES v1.36</h1>
+    <div class="subtitle">ハル (Haru) · Apr 22 2026 · Click any component for kubectl commands</div>
+    <div class="badges">
+      <span class="badge s">18 Stable</span><span class="badge b">25 Beta</span>
+      <span class="badge n">25 Alpha</span><span class="badge d">Ingress-NGINX Retired</span>
+    </div>
+  </div>
+  <div class="hstats">
+    <div class="sbox"><div class="n2">70</div><div class="lb">Enhancements</div></div>
+    <div class="sbox"><div class="n2">v1.36</div><div class="lb">Current</div></div>
+    <div class="sbox"><div class="n2">15w</div><div class="lb">Cycle</div></div>
+  </div>
+</header>
+
+<div class="cluster">
+  <div class="ctag">☸ Kubernetes Cluster</div>
+
+  <!-- CONTROL PLANE -->
+  <div class="cpw">
+    <div class="shead"><div class="dot" style="background:var(--blue);box-shadow:0 0 8px var(--blue)"></div><div class="lbl" style="color:var(--blue)">Control Plane</div><div class="line"></div></div>
+    <div class="cpg">
+
+      <div class="card" data-c="blue" data-id="apiserver" onclick="show('apiserver')">
+        <div class="anim"></div><div class="anim2"></div>
+        <span class="cicon">🔌</span>
+        <div class="cname">kube-apiserver</div>
+        <div class="cdesc">Central REST API. All components communicate through it.</div>
+        <div class="cbadge">GA · Fine-grained kubelet auth</div>
+      </div>
+
+      <div class="card" data-c="purple" data-id="etcd" onclick="show('etcd')">
+        <div id="ep"></div>
+        <span class="cicon">🗄️</span>
+        <div class="cname">etcd</div>
+        <div class="cdesc">Distributed KV store. Single source of truth for all cluster state.</div>
+        <div class="cbadge">Raft Consensus</div>
+      </div>
+
+      <div class="card" data-c="cyan" data-id="scheduler" onclick="show('scheduler')">
+        <div class="anim"></div>
+        <span class="cicon">📅</span>
+        <div class="cname">kube-scheduler</div>
+        <div class="cdesc">Filter + Score pipeline. Assigns Pods to optimal nodes.</div>
+        <div class="cbadge">DRA Scheduler</div>
+      </div>
+
+      <div class="card" data-c="yellow" data-id="controller" onclick="show('controller')">
+        <div class="anim">⚙️</div>
+        <span class="cicon">⚙️</span>
+        <div class="cname">controller-manager</div>
+        <div class="cdesc">All built-in reconcile loops as one binary.</div>
+        <div class="cbadge">Job Managed-By GA</div>
+      </div>
+
+      <div class="card" data-c="orange" data-id="cloud" onclick="show('cloud')">
+        <div class="anim">☁️</div>
+        <span class="cicon">☁️</span>
+        <div class="cname">cloud-controller-manager</div>
+        <div class="cdesc">Pluggable cloud bridge: LBs, node lifecycle, routes.</div>
+        <div class="cbadge">Out-of-tree</div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="conn"><hr><div class="arr">↕</div><span>kubelet ↔ API server (watch / status update)</span><div class="arr">↕</div><hr></div>
+
+  <!-- WORKER NODES -->
+  <div class="shead" style="margin-bottom:12px"><div class="dot" style="background:var(--green);box-shadow:0 0 8px var(--green)"></div><div class="lbl" style="color:var(--green)">Worker Nodes</div><div class="line"></div></div>
+
+  <div class="nwrap">
+    <div class="node">
+      <div class="nh"><div class="nn">worker-node-01</div><div class="ns">READY</div></div>
+      <div class="ncg">
+        <div class="nc" data-id="kubelet" onclick="show('kubelet')">
+          <span class="cicon">🤖</span><div class="cname" style="color:var(--green)">kubelet</div>
+          <div class="cdesc">Node agent. Fine-grained auth GA in v1.36.</div>
+        </div>
+        <div class="nc" data-id="kubeproxy" onclick="show('kubeproxy')">
+          <div class="fl"></div>
+          <span class="cicon">🔀</span><div class="cname" style="color:var(--cyan)">kube-proxy</div>
+          <div class="cdesc">iptables/IPVS routing. eBPF replaceable.</div>
+        </div>
+        <div class="nc" data-id="runtime" onclick="show('runtime')">
+          <span class="cicon">📦</span><div class="cname" style="color:var(--blue)">containerd / CRI-O</div>
+          <div class="cdesc">OCI runtime. User Namespaces GA v1.36.</div>
+        </div>
+        <div class="nc" data-id="cni" onclick="show('cni')">
+          <div class="bdots"><span></span><span></span><span></span></div>
+          <span class="cicon">🔌</span><div class="cname" style="color:var(--purple)">CNI / CSI / DRA</div>
+          <div class="cdesc">Net, storage & device allocation plugins.</div>
+        </div>
+        <div class="pods" onclick="show('pods')">
+          <div class="ptitle">Running Pods</div>
+          <div class="plist">
+            <div class="pod">nginx-7d4c</div><div class="pod">api-5f9b</div>
+            <div class="pod">worker-3a1e</div><div class="pod">+n pods</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="node">
+      <div class="nh"><div class="nn">worker-node-02</div><div class="ns">READY</div></div>
+      <div class="ncg">
+        <div class="nc" data-id="kubelet" onclick="show('kubelet')">
+          <span class="cicon">🤖</span><div class="cname" style="color:var(--green)">kubelet</div>
+          <div class="cdesc">In-place pod resize GA (v1.35). cgroup v2 only.</div>
+        </div>
+        <div class="nc" data-id="kubeproxy" onclick="show('kubeproxy')">
+          <div class="fl"></div>
+          <span class="cicon">🔀</span><div class="cname" style="color:var(--cyan)">kube-proxy</div>
+          <div class="cdesc">externalIPs deprecated. Cilium eBPF recommended.</div>
+        </div>
+        <div class="nc" data-id="runtime" onclick="show('runtime')">
+          <span class="cicon">📦</span><div class="cname" style="color:var(--blue)">containerd / CRI-O</div>
+          <div class="cdesc">cgroup v1 removed (v1.35). User Namespaces GA.</div>
+        </div>
+        <div class="nc" data-id="cni" onclick="show('cni')">
+          <div class="bdots"><span></span><span></span><span></span></div>
+          <span class="cicon">🔌</span><div class="cname" style="color:var(--purple)">CNI / CSI / DRA</div>
+          <div class="cdesc">SELinux mount GA. Device health alpha.</div>
+        </div>
+        <div class="pods" onclick="show('pods')">
+          <div class="ptitle">Running Pods</div>
+          <div class="plist">
+            <div class="pod">db-main-8k2p</div><div class="pod">cache-1f7a</div>
+            <div class="pod">ml-job-9b3c</div><div class="pod">+n pods</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ADDONS -->
+  <div class="awrap">
+    <div class="shead" style="margin-bottom:12px"><div class="dot" style="background:var(--purple);box-shadow:0 0 8px var(--purple)"></div><div class="lbl" style="color:var(--purple)">Cluster Add-ons</div><div class="line"></div></div>
+    <div class="agrid">
+      <div class="addon" onclick="show('coredns')"><span class="aicon">🌐</span><div><div class="aname">CoreDNS</div><div class="adesc">Service DNS resolution</div></div></div>
+      <div class="addon" onclick="show('gateway')"><span class="aicon">🚪</span><div><div class="aname">Gateway API v1.5</div><div class="adesc">Replaces Ingress-NGINX ★</div></div></div>
+      <div class="addon" onclick="show('metrics')"><span class="aicon">📊</span><div><div class="aname">Metrics Server</div><div class="adesc">HPA/VPA resource source</div></div></div>
+      <div class="addon" onclick="show('hpa')"><span class="aicon">⚡</span><div><div class="aname">HPA / KEDA</div><div class="adesc">Event-driven autoscaling</div></div></div>
+      <div class="addon" onclick="show('certmgr')"><span class="aicon">🔐</span><div><div class="aname">cert-manager</div><div class="adesc">TLS cert automation</div></div></div>
+      <div class="addon" onclick="show('dra')"><span class="aicon">🖥️</span><div><div class="aname">DRA Devices</div><div class="adesc">GPU/FPGA allocation</div></div></div>
+    </div>
+  </div>
+
+  <!-- TICKER -->
+  <div class="ticker">
+    <div class="ttag">v1.36 New</div>
+    <div class="titems">
+      <div class="tscroll">
+        <span class="titem">User Namespaces → GA</span><span class="titem">Kubelet Fine-grained Auth → GA</span><span class="titem">SELinux Volume Mount → GA</span><span class="titem">In-Place Pod Resize → GA (v1.35)</span><span class="titem">Ingress-NGINX Retired Mar 24 2026</span><span class="titem">Gateway API v1.5 Released Feb 2026</span><span class="titem">cgroup v1 Removed (v1.35)</span><span class="titem">externalIPs Field Deprecated</span><span class="titem">Pod-Level Resource Managers Alpha</span><span class="titem">Device Health Reporting Alpha</span>
+        <span class="titem">User Namespaces → GA</span><span class="titem">Kubelet Fine-grained Auth → GA</span><span class="titem">SELinux Volume Mount → GA</span><span class="titem">In-Place Pod Resize → GA (v1.35)</span><span class="titem">Ingress-NGINX Retired Mar 24 2026</span><span class="titem">Gateway API v1.5 Released Feb 2026</span><span class="titem">cgroup v1 Removed (v1.35)</span><span class="titem">externalIPs Field Deprecated</span><span class="titem">Pod-Level Resource Managers Alpha</span><span class="titem">Device Health Reporting Alpha</span>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /cluster -->
+
+</div><!-- /wrap -->
+
+<!-- DETAIL PANEL -->
+<div class="panel" id="panel">
+  <div class="pb">
+    <div class="ptop">
+      <div>
+        <div class="pname" id="pname"></div>
+        <div class="ptags" id="ptags"></div>
+      </div>
+      <button class="pclose" onclick="closePanel()">✕</button>
+    </div>
+    <div class="pdesc" id="pdesc"></div>
+    <div class="pupdate" id="pupdate" style="display:none"></div>
+    <div class="ksec">
+      <div class="ktitle">kubectl Commands</div>
+      <div class="cgrid" id="pcmds"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const D = {
+  apiserver:{name:'🔌 kube-apiserver',color:'#4f9cf9',
+    desc:'Central management entity. All kubectl commands, internal watches, and integrations go through the REST API. Only component that writes directly to etcd. Horizontally scalable.',
+    tags:['REST API','RBAC','Admission Webhooks','API Aggregation','mTLS'],
+    update:'v1.36: Fine-grained kubelet API authorization → GA. Replaces the overly broad nodes/proxy permission for monitoring.',
+    cmds:[
+      {l:'Check API server health',c:'kubectl get --raw /healthz'},
+      {l:'List all API versions',c:'kubectl api-versions'},
+      {l:'List all API resources',c:'kubectl api-resources'},
+      {l:'Get cluster info',c:'kubectl cluster-info'},
+      {l:'View API server pod config',c:'kubectl get pod kube-apiserver-<node> -n kube-system -o yaml'},
+      {l:'Check API server logs',c:'kubectl logs -n kube-system kube-apiserver-<node> --tail=50'},
+      {l:'Verify RBAC permissions',c:'kubectl auth can-i list pods --all-namespaces'},
+      {l:'List admission webhooks',c:'kubectl get validatingwebhookconfigurations\nkubectl get mutatingwebhookconfigurations'},
+    ]},
+  etcd:{name:'🗄️ etcd',color:'#a78bfa',
+    desc:'Distributed key-value store using Raft consensus. Stores ALL cluster state: Pods, Services, Secrets, RBAC, ConfigMaps. Deploy as 3 or 5-node cluster. Back up before every upgrade.',
+    tags:['Raft Consensus','gRPC v3','Lease TTL','WAL Snapshots','Peer TLS'],
+    update:'N-2 version skew policy: stay within 2 minor versions of latest. Always snapshot before upgrades.',
+    cmds:[
+      {l:'Check etcd pod status',c:'kubectl get pod -n kube-system -l component=etcd'},
+      {l:'View etcd logs',c:'kubectl logs -n kube-system etcd-<node> --tail=50'},
+      {l:'List etcd members',c:'ETCDCTL_API=3 etcdctl member list \\\n  --endpoints=https://127.0.0.1:2379 \\\n  --cacert=/etc/kubernetes/pki/etcd/ca.crt \\\n  --cert=/etc/kubernetes/pki/etcd/peer.crt \\\n  --key=/etc/kubernetes/pki/etcd/peer.key'},
+      {l:'Take a snapshot backup',c:'ETCDCTL_API=3 etcdctl snapshot save /backup/etcd.db \\\n  --endpoints=https://127.0.0.1:2379 \\\n  --cacert=... --cert=... --key=...'},
+      {l:'Verify snapshot integrity',c:'ETCDCTL_API=3 etcdctl snapshot status /backup/etcd.db'},
+      {l:'Check endpoint health',c:'ETCDCTL_API=3 etcdctl endpoint health \\\n  --endpoints=https://127.0.0.1:2379 \\\n  --cacert=... --cert=... --key=...'},
+    ]},
+  scheduler:{name:'📅 kube-scheduler',color:'#22d3ee',
+    desc:'Watches unscheduled Pods and assigns them via two-phase pipeline: Filter (eliminate unsuitable nodes) then Score (rank remaining). Considers resources, affinity, taints, topology.',
+    tags:['Filter Phase','Score Phase','Affinity','Taints/Tolerations','Topology Spread'],
+    update:'v1.36: DRA device scheduling integration maturing. Pod-Level Resource Managers (alpha) for GPU/HPC workloads.',
+    cmds:[
+      {l:'Check scheduler pod',c:'kubectl get pod -n kube-system -l component=kube-scheduler'},
+      {l:'View scheduler logs',c:'kubectl logs -n kube-system kube-scheduler-<node> --tail=50'},
+      {l:'Debug why a pod is pending',c:'kubectl describe pod <pod-name> -n <ns>\n# Check the Events section for scheduling failures'},
+      {l:'List nodes with taints',c:"kubectl get nodes -o json | jq '.items[].spec.taints'"},
+      {l:'Check node resource capacity',c:'kubectl describe nodes | grep -A5 "Capacity:"'},
+      {l:'View node allocatable resources',c:'kubectl describe node <node> | grep -A8 "Allocatable:"'},
+      {l:'View scheduler config',c:'kubectl get pod kube-scheduler-<node> -n kube-system -o yaml'},
+    ]},
+  controller:{name:'⚙️ kube-controller-manager',color:'#fbbf24',
+    desc:'Runs all built-in controller reconcile loops as one binary. Key controllers: Node, ReplicaSet, Deployment, StatefulSet, Job, CronJob, Endpoints, Namespace, ServiceAccount.',
+    tags:['Node Controller','ReplicaSet','Job/CronJob','StatefulSet','Leader Election'],
+    update:'v1.36: Job Managed-By → GA. Enables Kueue to manage Jobs without built-in controller conflict.',
+    cmds:[
+      {l:'Check controller-manager pod',c:'kubectl get pod -n kube-system -l component=kube-controller-manager'},
+      {l:'View controller-manager logs',c:'kubectl logs -n kube-system kube-controller-manager-<node> --tail=50'},
+      {l:'List all Deployments',c:'kubectl get deployments -A'},
+      {l:'List all ReplicaSets',c:'kubectl get replicasets -A'},
+      {l:'List all StatefulSets',c:'kubectl get statefulsets -A'},
+      {l:'List Jobs and CronJobs',c:'kubectl get jobs,cronjobs -A'},
+      {l:'Check Endpoints',c:'kubectl get endpoints -A'},
+      {l:'View controller-manager config',c:'kubectl get pod kube-controller-manager-<node> -n kube-system -o yaml'},
+    ]},
+  cloud:{name:'☁️ cloud-controller-manager',color:'#fb923c',
+    desc:'Pluggable bridge to cloud provider APIs. Manages LoadBalancer Services, Node lifecycle, cloud network routes. Ships out-of-tree per cloud (EKS, GKE, AKS).',
+    tags:['LoadBalancer Svcs','Node Lifecycle','Route Controller','Out-of-tree'],
+    update:'All cloud providers now ship fully out-of-tree CCMs. Required for any managed K8s deployment.',
+    cmds:[
+      {l:'Check CCM pod',c:'kubectl get pod -n kube-system -l app=cloud-controller-manager'},
+      {l:'View CCM logs',c:'kubectl logs -n kube-system -l app=cloud-controller-manager --tail=50'},
+      {l:'List LoadBalancer Services',c:'kubectl get svc -A --field-selector spec.type=LoadBalancer'},
+      {l:'Describe a LoadBalancer Service',c:'kubectl describe svc <svc-name> -n <ns>'},
+      {l:'Check node cloud labels',c:'kubectl get nodes --show-labels | grep topology'},
+      {l:'View node providerID',c:"kubectl get node <node> -o jsonpath='{.spec.providerID}'"},
+    ]},
+  kubelet:{name:'🤖 kubelet',color:'#34d399',
+    desc:'Node agent. Registers the node, watches assigned Pods, instructs CRI to run containers, manages volumes, runs health probes, reports node/pod status back to control plane.',
+    tags:['CRI Interface','Pod Lifecycle','Health Probes','Volume Mount','cgroup v2'],
+    update:'v1.36: Fine-grained kubelet auth → GA. v1.35: In-place Pod resize → GA. cgroup v1 removed — must use cgroup v2.',
+    cmds:[
+      {l:'Check node status',c:'kubectl get nodes\nkubectl describe node <node-name>'},
+      {l:'Check kubelet service (on node)',c:'systemctl status kubelet\njournalctl -u kubelet -f'},
+      {l:'View node conditions',c:"kubectl get node <node> -o jsonpath='{.status.conditions[*].type}'"},
+      {l:'Check kubelet version',c:"kubectl get node <node> -o jsonpath='{.status.nodeInfo.kubeletVersion}'"},
+      {l:'Cordon node (stop scheduling)',c:'kubectl cordon <node-name>'},
+      {l:'Drain node (evict all pods)',c:'kubectl drain <node-name> --ignore-daemonsets --delete-emptydir-data'},
+      {l:'Uncordon node',c:'kubectl uncordon <node-name>'},
+      {l:'Top pod resource usage',c:'kubectl top pods --all-namespaces --sort-by=cpu'},
+      {l:'Check node allocatable',c:'kubectl describe node <node> | grep -A8 "Allocatable:"'},
+    ]},
+  kubeproxy:{name:'🔀 kube-proxy',color:'#22d3ee',
+    desc:'Network proxy on every node. Maintains iptables or IPVS rules for Service VIP routing. Handles ClusterIP, NodePort, LoadBalancer Services. Replaceable by Cilium eBPF.',
+    tags:['iptables / IPVS','ClusterIP','NodePort','Service VIPs','eBPF replaceable'],
+    update:'v1.36: externalIPs Service field deprecated (CVE-2020-8554). Full removal planned v1.43. Migrate to LoadBalancer/Gateway.',
+    cmds:[
+      {l:'Check kube-proxy DaemonSet',c:'kubectl get daemonset kube-proxy -n kube-system'},
+      {l:'Check kube-proxy pods',c:'kubectl get pods -n kube-system -l k8s-app=kube-proxy'},
+      {l:'View kube-proxy logs',c:'kubectl logs -n kube-system -l k8s-app=kube-proxy --tail=50'},
+      {l:'List all Services',c:'kubectl get svc -A'},
+      {l:'Describe a Service',c:'kubectl describe svc <name> -n <ns>'},
+      {l:'List Endpoints for a Service',c:'kubectl get endpoints <svc-name> -n <ns>'},
+      {l:'Check proxy mode (iptables/ipvs)',c:'kubectl get configmap kube-proxy -n kube-system -o yaml | grep mode'},
+      {l:'View iptables rules (on node)',c:'iptables -t nat -L KUBE-SERVICES -n'},
+    ]},
+  runtime:{name:'📦 Container Runtime (CRI)',color:'#4f9cf9',
+    desc:'OCI-compatible runtime via CRI interface. Default: containerd. Alternative: CRI-O. User Namespaces GA in v1.36 (requires containerd 2.x or CRI-O 1.30+).',
+    tags:['containerd','CRI-O','OCI Spec','cgroup v2 only','User Namespaces GA'],
+    update:'v1.36: User Namespaces → GA (Linux-only, major multi-tenant security improvement). v1.35: cgroup v1 removed.',
+    cmds:[
+      {l:'Check runtime version (on node)',c:'crictl version\ncrictl info'},
+      {l:'List running containers',c:'crictl ps'},
+      {l:'List all pods via CRI',c:'crictl pods'},
+      {l:'List images on node',c:'crictl images'},
+      {l:'Pull an image',c:'crictl pull nginx:latest'},
+      {l:'Get container logs',c:'crictl logs <container-id>'},
+      {l:'Inspect a container',c:'crictl inspect <container-id>'},
+      {l:'Check runtime via kubectl',c:"kubectl get node <node> -o jsonpath='{.status.nodeInfo.containerRuntimeVersion}'"},
+      {l:'Check containerd service',c:'systemctl status containerd'},
+    ]},
+  cni:{name:'🔌 CNI / CSI / DRA',color:'#a78bfa',
+    desc:'Three plugin interfaces: CNI (pod networking: Calico, Cilium, Flannel), CSI (persistent storage: EBS, Longhorn, Ceph), DRA (GPU/FPGA device allocation). All pluggable via standard interfaces.',
+    tags:['Calico/Cilium','PersistentVolumes','StorageClass','DRA GPU','SELinux Mount GA'],
+    update:'v1.36: SELinux volume mount → GA (faster pod startup). Device Health Reporting (alpha) for GPU health reporting.',
+    cmds:[
+      {l:'List nodes with network info',c:'kubectl get nodes -o wide'},
+      {l:'Check Calico/Cilium pods',c:'kubectl get pods -n kube-system -l k8s-app=calico-node'},
+      {l:'List StorageClasses',c:'kubectl get storageclass'},
+      {l:'List PersistentVolumes',c:'kubectl get pv'},
+      {l:'List PersistentVolumeClaims',c:'kubectl get pvc -A'},
+      {l:'Describe a PVC',c:'kubectl describe pvc <name> -n <ns>'},
+      {l:'List CSI drivers',c:'kubectl get csidriver'},
+      {l:'List NetworkPolicies',c:'kubectl get networkpolicies -A'},
+      {l:'List DRA ResourceClaims',c:'kubectl get resourceclaims -A'},
+    ]},
+  pods:{name:'🟦 Pods',color:'#22d3ee',
+    desc:'Smallest deployable unit. Containers in a Pod share network namespace and volumes. Sidecar containers stable since v1.29. In-Place vertical scaling GA since v1.35.',
+    tags:['Init Containers','Sidecar Stable v1.29','In-Place Resize GA','QoS Classes','Resource Limits'],
+    update:'v1.35: In-Place Pod Resize → GA. v1.36: Pod-Level Resource Managers (alpha) for GPU/HPC topology-aware scheduling.',
+    cmds:[
+      {l:'List all pods (all namespaces)',c:'kubectl get pods -A'},
+      {l:'List pods with node + IP',c:'kubectl get pods -A -o wide'},
+      {l:'Describe a pod',c:'kubectl describe pod <pod-name> -n <ns>'},
+      {l:'Get pod logs',c:'kubectl logs <pod-name> -n <ns>\nkubectl logs <pod-name> -c <container> -n <ns>'},
+      {l:'Follow live logs',c:'kubectl logs -f <pod-name> -n <ns>'},
+      {l:'Exec into a pod',c:'kubectl exec -it <pod-name> -n <ns> -- /bin/sh'},
+      {l:'Check pod resource usage',c:'kubectl top pod <pod-name> -n <ns>'},
+      {l:'Watch pod changes live',c:'kubectl get pods -w -n <ns>'},
+      {l:'Force delete a stuck pod',c:'kubectl delete pod <pod-name> -n <ns> --grace-period=0 --force'},
+    ]},
+  coredns:{name:'🌐 CoreDNS',color:'#a78bfa',
+    desc:'Default cluster DNS since K8s 1.13. Resolves service names to ClusterIPs. Extensible via Corefile plugins. Replaced kube-dns.',
+    tags:['DNS-SD','Service Discovery','Corefile','Forward/Cache','ndots'],
+    update:'Stable. Match CoreDNS version to K8s minor version — check release notes compatibility table.',
+    cmds:[
+      {l:'Check CoreDNS pods',c:'kubectl get pods -n kube-system -l k8s-app=kube-dns'},
+      {l:'View CoreDNS logs',c:'kubectl logs -n kube-system -l k8s-app=kube-dns --tail=50'},
+      {l:'View Corefile config',c:'kubectl get configmap coredns -n kube-system -o yaml'},
+      {l:'Test DNS from a pod',c:"kubectl run dns-test --image=busybox:1.28 --rm -it --restart=Never -- nslookup kubernetes"},
+      {l:'Lookup a service DNS name',c:'kubectl run dns-test --image=busybox:1.28 --rm -it --restart=Never \\\n  -- nslookup <svc>.<ns>.svc.cluster.local'},
+      {l:'Check DNS service',c:'kubectl get svc kube-dns -n kube-system'},
+      {l:'Restart CoreDNS',c:'kubectl rollout restart deployment coredns -n kube-system'},
+    ]},
+  gateway:{name:'🚪 Gateway API v1.5',color:'#a78bfa',
+    desc:'Official successor to Ingress. Released Feb 2026 — biggest release yet. Supports HTTP, GRPC, TLS, TCP. Implemented by Envoy Gateway, Cilium, Traefik, Istio, nginx.',
+    tags:['HTTPRoute','GRPCRoute','TLSRoute','ReferenceGrant','Standard/Stable'],
+    update:'⚠️ Ingress-NGINX RETIRED Mar 24 2026 — no more patches or security fixes. Migrate to Gateway API now.',
+    cmds:[
+      {l:'Check Gateway API CRDs installed',c:'kubectl get crd | grep gateway'},
+      {l:'List GatewayClasses',c:'kubectl get gatewayclasses'},
+      {l:'List Gateways',c:'kubectl get gateways -A'},
+      {l:'List HTTPRoutes',c:'kubectl get httproutes -A'},
+      {l:'List GRPCRoutes',c:'kubectl get grpcroutes -A'},
+      {l:'Describe a Gateway',c:'kubectl describe gateway <name> -n <ns>'},
+      {l:'Describe an HTTPRoute',c:'kubectl describe httproute <name> -n <ns>'},
+      {l:'Check Envoy Gateway pods',c:'kubectl get pods -n envoy-gateway-system'},
+    ]},
+  metrics:{name:'📊 Metrics Server',color:'#a78bfa',
+    desc:'Lightweight in-memory metrics aggregator. Scrapes kubelet Summary API for CPU/memory. Used by kubectl top and HPA. No historical data storage.',
+    tags:['kubectl top','HPA Source','Resource Metrics API','In-memory only'],
+    update:'Stable. Pair with Prometheus Adapter or KEDA for custom/external metrics HPA.',
+    cmds:[
+      {l:'Check Metrics Server pod',c:'kubectl get pod -n kube-system -l k8s-app=metrics-server'},
+      {l:'Top nodes',c:'kubectl top nodes'},
+      {l:'Top pods (all namespaces)',c:'kubectl top pods -A --sort-by=cpu'},
+      {l:'Top pods by memory',c:'kubectl top pods -n <ns> --sort-by=memory'},
+      {l:'Check Metrics API',c:'kubectl get --raw /apis/metrics.k8s.io/v1beta1/nodes'},
+      {l:'List HPAs',c:'kubectl get hpa -A'},
+      {l:'Describe HPA',c:'kubectl describe hpa <name> -n <ns>'},
+    ]},
+  hpa:{name:'⚡ HPA / VPA / KEDA',color:'#a78bfa',
+    desc:'HPA scales Pod replicas on CPU/memory/custom metrics. VPA adjusts resource requests. KEDA scales on external events (Kafka, SQS, Prometheus). Scale-to-zero support.',
+    tags:['HPA v2','VPA + In-Place Resize','KEDA 2.x','Scale-to-Zero','Cluster Autoscaler'],
+    update:'v1.35: In-Place Pod Resize GA makes VPA non-disruptive. KEDA 2.x integrates with DRA for GPU scale-to-zero.',
+    cmds:[
+      {l:'List all HPAs',c:'kubectl get hpa -A'},
+      {l:'Describe HPA',c:'kubectl describe hpa <name> -n <ns>'},
+      {l:'Create HPA from CLI',c:'kubectl autoscale deployment <name> \\\n  --min=2 --max=10 --cpu-percent=70 -n <ns>'},
+      {l:'List VPAs (if installed)',c:'kubectl get vpa -A'},
+      {l:'Check KEDA ScaledObjects',c:'kubectl get scaledobjects -A'},
+      {l:'Check KEDA TriggerAuthentications',c:'kubectl get triggerauthentications -A'},
+      {l:'Watch HPA scale events',c:"kubectl get events -n <ns> --field-selector reason=SuccessfulRescale"},
+    ]},
+  certmgr:{name:'🔐 cert-manager',color:'#a78bfa',
+    desc:"Automates X.509 certificate provisioning and renewal. Integrates with Let's Encrypt, Vault, Venafi, self-signed CAs. CRD-based. Auto-renews before expiry.",
+    tags:["ACME / Let's Encrypt",'CRD-based','Auto-renewal','Vault/Venafi','ClusterTrustBundle'],
+    update:'v1.35: ClusterTrustBundle API (beta) provides native pod cert signing, reducing external cert-manager dependency for internal TLS.',
+    cmds:[
+      {l:'Check cert-manager pods',c:'kubectl get pods -n cert-manager'},
+      {l:'View cert-manager logs',c:'kubectl logs -n cert-manager -l app=cert-manager --tail=50'},
+      {l:'List Certificates',c:'kubectl get certificates -A'},
+      {l:'Describe a Certificate',c:'kubectl describe certificate <name> -n <ns>'},
+      {l:'List Issuers',c:'kubectl get issuers -A'},
+      {l:'List ClusterIssuers',c:'kubectl get clusterissuers'},
+      {l:'List CertificateRequests',c:'kubectl get certificaterequests -A'},
+      {l:'Check ClusterTrustBundles',c:'kubectl get clustertrustbundles'},
+    ]},
+  dra:{name:'🖥️ DRA — Dynamic Resource Allocation',color:'#a78bfa',
+    desc:'New framework for allocating hardware devices (GPUs, FPGAs, NICs) to Pods. Replaces device plugin API with richer ResourceClaim API objects. Scheduler-integrated.',
+    tags:['GPU/FPGA/NIC','ResourceClaim API','Device Health Alpha','Pod-Level Mgr Alpha'],
+    update:'v1.36: Device Health Reporting (alpha) — DRA plugins report GPU/FPGA health to kubelet. Pod-Level Resource Managers (alpha) for topology-aware HPC scheduling.',
+    cmds:[
+      {l:'List ResourceClaims',c:'kubectl get resourceclaims -A'},
+      {l:'List ResourceClaimTemplates',c:'kubectl get resourceclaimtemplates -A'},
+      {l:'List DeviceClasses',c:'kubectl get deviceclasses'},
+      {l:'List ResourceSlices (node device inventory)',c:'kubectl get resourceslices'},
+      {l:'Describe a ResourceClaim',c:'kubectl describe resourceclaim <name> -n <ns>'},
+      {l:'Check DRA driver pods',c:'kubectl get pods -A | grep dra'},
+      {l:'View node GPU capacity',c:'kubectl describe node <node> | grep nvidia.com/gpu'},
+    ]},
+};
+
+function show(id){
+  const d=D[id]; if(!d)return;
+  document.getElementById('pname').innerHTML=`<span style="color:${d.color}">${d.name}</span>`;
+  const t=document.getElementById('ptags'); t.innerHTML='';
+  d.tags.forEach(x=>{const s=document.createElement('span');s.className='ptag';s.textContent=x;s.style.cssText=`color:${d.color};border-color:${d.color}44;background:${d.color}11`;t.appendChild(s);});
+  document.getElementById('pdesc').textContent=d.desc;
+  const u=document.getElementById('pupdate');
+  if(d.update){u.style.display='block';u.innerHTML=`<strong>2025–2026:</strong> ${d.update}`;}else u.style.display='none';
+  const g=document.getElementById('pcmds'); g.innerHTML='';
+  d.cmds.forEach(c=>{
+    const div=document.createElement('div');div.className='cc';
+    div.innerHTML=`<div class="clbl">${c.l}</div><pre class="ccode">${hl(c.c)}</pre><button class="cpbtn" onclick="cp(this,\`${c.c.replace(/`/g,'\\`')}\`)">COPY</button>`;
+    g.appendChild(div);
+  });
+  document.getElementById('panel').classList.add('open');
+}
+
+function hl(code){
+  return code
+    .replace(/\b(kubectl|crictl|etcdctl|systemctl|journalctl|iptables|jq)\b/g,'<span class="kw">$1</span>')
+    .replace(/(--[\w-]+=?)/g,'<span class="fl">$1</span>')
+    .replace(/(#[^\n]*)/g,'<span class="cmt">$1</span>');
+}
+
+function cp(btn,text){
+  navigator.clipboard.writeText(text).then(()=>{
+    btn.textContent='COPIED!';btn.classList.add('ok');
+    setTimeout(()=>{btn.textContent='COPY';btn.classList.remove('ok');},2000);
+  });
+}
+
+function closePanel(){document.getElementById('panel').classList.remove('open');}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closePanel();});
+
+// etcd particle drip
+const ep=document.getElementById('ep');
+if(ep){for(let i=0;i<7;i++){const p=document.createElement('div');p.className='particle';p.style.left=(8+i*13)+'%';p.style.height=(6+Math.random()*10)+'px';p.style.opacity=0.12+Math.random()*0.15;p.style.animationDuration=(1.2+Math.random()*2)+'s';p.style.animationDelay=(Math.random()*2)+'s';ep.appendChild(p);}}
+</script>
+</body>
+</html>
